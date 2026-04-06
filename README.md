@@ -406,7 +406,7 @@ Consider two schools:
 
 At the individual level, a Black student in School F may appear to have lower magnet enrollment probability than a White student in School E.
 
-However, this difference is not purely attributable to individual race.
+However, this difference is not purely attributable to individual race alone. Though, the other factors are likely a consequence of the long lasting impact of race driven policies such as well known policies prevelant in the south after the end of race based segregation in schools that still impact the communities it sought to oppress. Salvorte Saporito contends that magnet schools reinforced existing community divides rather than overcomming segregation barriers (Saporito, 2003). One may argue that the voluntary desegregation  tool only reinforced segregation and the result negatively impacts black students and hispanic students by a domino effect of factors. Saporitos' results suggest,  transportation limits, selective admissions, and parent self-selection influenced outcomes and maintained segregation by race and poverty (2003). Though we can't statistically say there is causal evidence with this data set, other studies such as with Saporito, demonstrate a lasting impact of race motivated policies such as race blind enrollment practices, as well as programs such as the magnet program that was claimed to be a tool of desegregation and later proved the latter. It supports the notion that discimination based on segregation negatively impacts the outcomes of black students and hispanic students today--when access to specialized educational paths such as Magnet programs improve ones potential collegiate and life paths (Cook, 2024). 
 
 Instead:
 
