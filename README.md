@@ -1,5 +1,6 @@
 # Magnet vs Traditional Schools Analysis  
 **Data Scientist:** Mark Crisci 
+
 -- **Analysis conducted on behalf of thesising NCF student:** Beverly Jacobs     
 
 ## Overview
