@@ -1,0 +1,867 @@
+---
+title: "Magnet vs Traditional Schools: Full Analysis"
+author: "Mark Crisci"
+output: pdf_document
+
+---
+
+# Introduction
+
+We model:
+
+$$
+P(Y=1|X) = \frac{e^{\eta}}{1+e^{\eta}}, \quad \eta = \beta_0 + \beta_1 X_1 + \cdots
+$$
+
+---
+
+# Load Data
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+
+mt <- read.csv("MagTrad.csv")
+
+mt <- mt %>%
+  mutate(
+    DEMOGRAPHIC = trimws(DEMOGRAPHIC),
+    DEMOGRAPHIC_CATEGORY = trimws(DEMOGRAPHIC_CATEGORY)
+  )
+```
+
+---
+
+# Create Variables
+
+```{r}
+mt <- mt %>%
+  mutate(
+    race_df = case_when(
+      str_detect(DEMOGRAPHIC, regex("black", TRUE)) ~ "Black",
+      str_detect(DEMOGRAPHIC, regex("white", TRUE)) ~ "White",
+      str_detect(DEMOGRAPHIC, regex("asian", TRUE)) ~ "Asian",
+      str_detect(DEMOGRAPHIC, regex("hispanic", TRUE)) ~ "Hispanic",
+      str_detect(DEMOGRAPHIC, regex("multi", TRUE)) ~ "Multiracial",
+      str_detect(DEMOGRAPHIC, regex("indian", TRUE)) ~ "Indigenous American",
+      TRUE ~ "Other"
+    )
+  )
+
+mt$race_df <- relevel(as.factor(mt$race_df), ref="White")
+
+mt <- mt %>%
+  mutate(
+    ses_clean = case_when(
+      str_detect(DEMOGRAPHIC, regex("non free", TRUE)) ~ "Non-Free",
+      str_detect(DEMOGRAPHIC, regex("free", TRUE)) ~ "Free",
+      TRUE ~ NA_character_
+    )
+  )
+```
+
+---
+
+# EDA
+
+## Race Summary
+
+```{r}
+race_summary <- mt %>%
+  filter(DEMOGRAPHIC_CATEGORY=="Ethnicity") %>%
+  group_by(race_df) %>%
+  summarise(
+    magnet=sum(MAGNET_STUDENTS),
+    traditional=sum(TRADITIONAL_STUDENTS),
+    total=magnet+traditional,
+    pct_magnet=magnet/total
+  )
+
+race_summary
+```
+
+```{r}
+ggplot(race_summary, aes(x=race_df, y=pct_magnet)) +
+  geom_col(fill="steelblue") +
+  scale_y_continuous(labels=scales::percent) +
+  theme_minimal()
+```
+
+## SES Summary
+
+```{r}
+ses_summary <- mt %>%
+  filter(DEMOGRAPHIC_CATEGORY=="Meal Status") %>%
+  group_by(ses_clean) %>%
+  summarise(
+    magnet=sum(MAGNET_STUDENTS),
+    traditional=sum(TRADITIONAL_STUDENTS),
+    total=magnet+traditional,
+    pct_magnet=magnet/total
+  ) %>%
+  filter(!is.na(ses_clean))
+
+ses_summary
+```
+
+```{r}
+ggplot(ses_summary, aes(x=ses_clean, y=pct_magnet, fill=ses_clean)) +
+  geom_col() +
+  scale_y_continuous(labels=scales::percent) +
+  theme_minimal()
+```
+
+---
+
+# School-Level Data
+
+```{r}
+race_school <- mt %>%
+  filter(DEMOGRAPHIC_CATEGORY=="Ethnicity") %>%
+  group_by(SCHOOL_NAME,SCHOOL_YEAR,race_df) %>%
+  summarise(
+    magnet=sum(MAGNET_STUDENTS),
+    traditional=sum(TRADITIONAL_STUDENTS),
+    .groups="drop"
+  ) %>%
+  filter((magnet+traditional)>0) %>%
+  filter(race_df!="Indigenous American")
+```
+
+---
+
+# Train/Test Split
+
+```{r}
+set.seed(42)
+train_idx <- sample(1:nrow(race_school),0.7*nrow(race_school))
+
+train <- race_school[train_idx,]
+test <- race_school[-train_idx,]
+```
+
+---
+
+# Model 1: Race Only
+
+```{r}
+log.obj <- glm(
+  cbind(magnet,traditional)~race_df,
+  family=binomial,
+  data=train
+)
+
+summary(log.obj)
+exp(coef(log.obj))
+```
+
+---
+
+# Interpretation (All Coefficients)
+
+## Intercept (White)
+
+$$
+\hat{\beta}_0 = -0.73057
+$$
+
+$$
+e^{-0.73057} = 0.4816
+$$
+
+$$
+p = \frac{0.4816}{1+0.4816} = 0.325
+$$
+
+White students have a 32.5 percent probability of magnet enrollment.
+
+---
+
+## Asian
+
+$$
+e^{1.84916} = 6.354
+$$
+
+$$
+6.354 - 1 = 5.354
+$$
+
+$$
+5.354 \times 100 = 535.4\%
+$$
+
+Asian students have 535.4 percent higher odds than White students.
+
+---
+
+## Black
+
+$$
+e^{0.18876} = 1.2078
+$$
+
+$$
+1.2078 - 1 = 0.2078
+$$
+
+$$
+0.2078 \times 100 = 20.78\%
+$$
+
+Black students have 20.78 percent higher odds than White students.
+
+---
+
+## Hispanic
+
+$$
+e^{-0.66290} = 0.515
+$$
+
+$$
+1 - 0.515 = 0.485
+$$
+
+$$
+0.485 \times 100 = 48.5\%
+$$
+
+Hispanic students have 48.5 percent lower odds.
+
+---
+
+## Multiracial
+
+$$
+e^{0.29820} = 1.347
+$$
+
+$$
+1.347 - 1 = 0.347
+$$
+
+$$
+0.347 \times 100 = 34.7\%
+$$
+
+Multiracial students have 34.7 percent higher odds.
+
+---
+
+# Model 2: Race + SES
+
+```{r}
+school_ses <- mt %>%
+  filter(DEMOGRAPHIC_CATEGORY=="Meal Status") %>%
+  group_by(SCHOOL_NAME,SCHOOL_YEAR,ses_clean) %>%
+  summarise(total=sum(MAGNET_STUDENTS+TRADITIONAL_STUDENTS),.groups="drop") %>%
+  filter(!is.na(ses_clean)) %>%
+  group_by(SCHOOL_NAME,SCHOOL_YEAR) %>%
+  slice_max(total,n=1) %>%
+  ungroup()
+
+race_ses <- race_school %>%
+  left_join(school_ses,by=c("SCHOOL_NAME","SCHOOL_YEAR"))
+
+log.obj.2 <- glm(
+  cbind(magnet,traditional)~race_df+ses_clean,
+  family=binomial,
+  data=race_ses
+)
+
+summary(log.obj.2)
+exp(coef(log.obj.2))
+```
+
+---
+
+# SES Interpretation
+
+$$
+e^{0.06123} = 1.063
+$$
+
+$$
+1.063 - 1 = 0.063
+$$
+
+$$
+0.063 \times 100 = 6.3\%
+$$
+
+Non-Free students have 6.3 percent higher odds, not statistically significant.
+
+---
+
+# Model 3: Interaction
+
+```{r}
+log.obj.int <- glm(
+  cbind(magnet,traditional)~race_df*ses_clean,
+  family=binomial,
+  data=race_ses
+)
+
+summary(log.obj.int)
+exp(coef(log.obj.int))
+```
+
+---
+
+# Interaction Interpretation
+
+$$
+\eta = \beta_0 + \beta_1 + \beta_2 + \beta_3
+$$
+
+Combined effects must be interpreted jointly.
+
+---
+
+# ANOVA
+
+```{r}
+anova(log.obj.2, log.obj.int, test="Chisq")
+```
+
+Interpretation:
+
+Reject H0 if p-value < 0.05. Interaction improves model.
+
+---
+
+# Validation
+
+```{r}
+test$pred <- predict(log.obj,newdata=test,type="response")
+test$actual <- test$magnet/(test$magnet+test$traditional)
+
+mean(abs(test$pred-test$actual))
+sqrt(mean((test$pred-test$actual)^2))
+```
+
+---
+
+# Visualization: Predicted vs Actual
+
+```{r}
+ggplot(test, aes(x=actual, y=pred)) +
+  geom_point(alpha=0.5) +
+  geom_abline(slope=1, intercept=0, color="red") +
+  theme_minimal()
+```
+
+
+
+
+
+
+ 
+### build magnet programs variable
+
+```{r}
+# ===============================
+# 1. BUILD RACE SCHOOL DATASET
+# ===============================
+
+race_school_pct <- mt %>%
+  filter(DEMOGRAPHIC_CATEGORY == "Ethnicity") %>%
+  
+  group_by(SCHOOL_NAME, SCHOOL_YEAR, race_df) %>%
+  summarise(
+    magnet = sum(MAGNET_STUDENTS),
+    traditional = sum(TRADITIONAL_STUDENTS),
+    total_race = magnet + traditional,
+    .groups = "drop"
+  ) %>%
+
+  group_by(SCHOOL_NAME, SCHOOL_YEAR) %>%
+  mutate(
+    total_school = sum(total_race),
+    pct_race = total_race / total_school,
+    pct_magnet = magnet / total_race,
+    pct_traditional = traditional / total_race
+  ) %>%
+  
+  ungroup()
+
+race_school_pct
+
+# 2. ADD DOMINANT RACE
+dominant_race <- race_school_pct %>%
+  group_by(SCHOOL_NAME, SCHOOL_YEAR) %>%
+  slice_max(pct_race, n = 1) %>%
+  ungroup() %>%
+  select(SCHOOL_NAME, SCHOOL_YEAR, dominant_race = race_df)
+dominant_race
+race_school_pct <- race_school_pct %>%
+  left_join(dominant_race, by = c("SCHOOL_NAME", "SCHOOL_YEAR"))
+
+race_school_pct
+
+
+
+# 3. MAGNET PROGRAM DATASET
+magnet_programs <- data.frame(
+  SCHOOL_NAME = c(
+    "BLAKE HIGH SCHOOL","KING HIGH SCHOOL","MIDDLETON HIGH SCHOOL",
+    "TAMPA BAY TECH HIGH SCHOOL","STRAWBERRY CREST HIGH SCHOOL",
+    "ALONSO HIGH SCHOOL","ROBINSON HIGH SCHOOL","PLANT HIGH SCHOOL",
+    "SPOTO HIGH SCHOOL","WHARTON HIGH SCHOOL",
+    "STEWART MIDDLE MAGNET SCHOOL",
+    "PROGRESS VILLAGE MIDDLE MAGNET SCHOOL",
+    "DOWDELL MIDDLE MAGNET SCHOOL"
+  ),
+  STEM = c(0,0,1,1,0,0,0,0,0,0,1,0,1),
+  ARTS = c(1,0,0,0,0,0,0,0,0,0,0,1,0),
+  IB = c(0,1,0,0,1,1,1,1,0,0,0,0,0),
+  MEDICAL = c(0,0,1,1,0,0,0,0,0,0,0,0,0),
+  CAREER_TECH = c(0,0,1,1,0,0,0,0,1,1,0,1,1),
+  ENVIRONMENTAL = c(0,0,0,0,0,0,0,0,0,0,1,0,0)
+)
+
+magnet_programs$num_programs <- rowSums(magnet_programs[,2:7])
+
+
+# 4. MERGE PROGRAM DATA
+full_data <- race_school_pct %>%
+  left_join(magnet_programs, by = "SCHOOL_NAME") %>%
+  mutate(
+    STEM = coalesce(STEM, 0),
+    ARTS = coalesce(ARTS, 0),
+    IB = coalesce(IB, 0),
+    MEDICAL = coalesce(MEDICAL, 0),
+    CAREER_TECH = coalesce(CAREER_TECH, 0),
+    ENVIRONMENTAL = coalesce(ENVIRONMENTAL, 0),
+    num_programs = coalesce(num_programs, 0)
+  )
+
+full_data
+
+
+# 5. Merge SES data
+ses_school <- mt %>%
+  filter(DEMOGRAPHIC_CATEGORY == "Meal Status") %>%
+  
+  group_by(SCHOOL_NAME, SCHOOL_YEAR, DEMOGRAPHIC) %>%
+  summarise(
+    total = sum(MAGNET_STUDENTS + TRADITIONAL_STUDENTS),
+    .groups = "drop"
+  ) %>%
+  
+  group_by(SCHOOL_NAME, SCHOOL_YEAR) %>%
+  mutate(
+    total_school = sum(total),
+    pct_ses = total / total_school
+  ) %>%
+  ungroup() %>%
+  
+  mutate(
+    ses_clean = case_when(
+      grepl("free", DEMOGRAPHIC, ignore.case = TRUE) ~ "Free",
+      grepl("non", DEMOGRAPHIC, ignore.case = TRUE) ~ "Non-Free",
+      TRUE ~ NA_character_
+    )
+  )
+
+ses_school
+
+
+ses_school <- ses_school %>%
+  mutate(
+    ses_clean = case_when(
+      grepl("non", DEMOGRAPHIC, ignore.case = TRUE) ~ "Non-Free",
+      grepl("free", DEMOGRAPHIC, ignore.case = TRUE) ~ "Free",
+      TRUE ~ NA_character_
+    )
+  )
+
+ses_wide <- ses_school %>%
+  filter(!is.na(ses_clean)) %>%
+  
+  group_by(SCHOOL_NAME, SCHOOL_YEAR, ses_clean) %>%
+  summarise(
+    pct_ses = sum(pct_ses),
+    .groups = "drop"
+  ) %>%
+  
+  pivot_wider(
+    names_from = ses_clean,
+    values_from = pct_ses,
+    values_fill = list(pct_ses = 0)
+  )
+
+ses_wide <- ses_wide %>%
+  rename(
+    pct_free = Free,
+    pct_nonfree = `Non-Free`
+  )
+
+# 6. Final dataset
+final_data <- full_data %>%
+  left_join(ses_wide, by = c("SCHOOL_NAME", "SCHOOL_YEAR"))
+
+
+
+# 7. DIVERSITY INDEX
+diversity_index <- race_school_pct %>%
+  group_by(SCHOOL_NAME, SCHOOL_YEAR) %>%
+  summarise(
+    diversity = -sum(pct_race * log(pct_race + 1e-9)),
+    .groups = "drop"
+  )
+
+final_data <- final_data %>%
+  left_join(diversity_index, by = c("SCHOOL_NAME", "SCHOOL_YEAR"))
+
+final_data
+
+final_data_model <- final_data %>%
+  filter(race_df != "Indigenous American")
+
+
+# 8. SCHOOL-LEVEL DATA (CRITICAL)
+school_level <- final_data %>%
+  group_by(SCHOOL_NAME, SCHOOL_YEAR) %>%
+  summarise(
+    pct_white = pct_race[race_df == "White"][1],
+    num_programs = max(num_programs),
+    pct_free = max(pct_free),
+    diversity = max(diversity),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    majority_white = ifelse(pct_white > 0.5, 1, 0)
+  )
+school_level
+
+
+
+
+# 9. VISUALS
+
+# Race vs Magnet
+ggplot(race_school_pct, aes(x = race_df, y = pct_magnet)) +
+  geom_boxplot() +
+  theme_minimal()
+
+# Program diversity vs race composition
+ggplot(school_level, aes(x = pct_white, y = num_programs)) +
+  geom_point() +
+  geom_smooth(method = "lm")+
+  geom_jitter(height = 0.1)
+
+# SES vs magnet
+ggplot(school_level, aes(x = pct_free, y = num_programs)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+# 10. MODELS
+log.obj <- glm(
+  cbind(magnet, traditional) ~ race_df,
+  family = binomial,
+  data = final_data_model
+)
+summary(log.obj)
+
+log.obj.2 <- glm(
+  cbind(magnet, traditional) ~ race_df + pct_free,
+  family = binomial,
+  data = final_data_model
+)
+
+
+log.obj.3 <- glm(
+  cbind(magnet, traditional) ~ race_df + num_programs,
+  family = binomial,
+  data = final_data_model
+)
+summary(log.obj.3)
+
+log.obj.int <- glm(
+  cbind(magnet, traditional) ~ race_df + pct_free + num_programs + race_df:pct_free,
+  family = binomial,
+  data = final_data_model
+)
+summary(log.obj.int)
+
+
+log.obj.full <- glm(
+  cbind(magnet, traditional) ~ race_df + pct_free + num_programs + diversity,
+  family = binomial,
+  data = final_data_model
+)
+summary(log.obj.full)
+
+cor(final_data_model$pct_free, final_data_model$pct_race, use = "complete.obs")
+cor(final_data_model$pct_free, final_data_model$diversity, use = "complete.obs")
+cor(final_data_model$pct_free, final_data_model$num_programs, use = "complete.obs")
+cor(final_data_model$diversity, final_data_model$pct_race, use = "complete.obs")
+cor(final_data_model$diversity, final_data_model$num_programs, use = "complete.obs")
+
+
+# 11. ANOVA- Model COmparison
+anova(log.obj.int, log.obj.full, test = "Chisq")
+
+
+```
+
+
+# Validation
+
+```{r}
+# -------------------------------
+# STEP 1: Clean + fix factors FIRST
+# -------------------------------
+
+final_data_model <- final_data_model %>%
+  filter(race_df != "Other")   # remove empty category
+
+final_data_model$race_df <- factor(final_data_model$race_df)
+
+# -------------------------------
+# STEP 2: Train/Test Split
+# -------------------------------
+
+set.seed(123)
+
+train_idx <- sample(1:nrow(final_data_model), size = 0.7*nrow(final_data_model))
+
+train <- final_data_model[train_idx, ]
+test  <- final_data_model[-train_idx, ]
+
+# Ensure SAME factor levels
+test$race_df <- factor(test$race_df, levels = levels(train$race_df))
+
+# -------------------------------
+# STEP 3: Fit Model (TRAIN ONLY)
+# -------------------------------
+
+log.obj.full <- glm(
+  cbind(magnet, traditional) ~ race_df + pct_free + num_programs + diversity,
+  family = binomial,
+  data = train
+)
+
+# -------------------------------
+# STEP 4: Predict (TEST ONLY)
+# -------------------------------
+
+test$pred <- predict(log.obj.full, newdata = test, type = "response")
+
+# -------------------------------
+# STEP 5: Create Actual Values
+# -------------------------------
+
+test$total <- test$magnet + test$traditional
+test$actual <- test$magnet / test$total
+
+test <- test %>%
+  filter(
+    !is.na(pred),
+    !is.na(actual),
+    total > 0
+  )
+
+# -------------------------------
+# STEP 6: Metrics
+# -------------------------------
+
+# MAE
+mae <- mean(abs(test$pred - test$actual))
+
+# RMSE
+rmse <- sqrt(mean((test$pred - test$actual)^2))
+
+# Weighted MAE (IMPORTANT)
+weighted_mae <- sum(test$total * abs(test$pred - test$actual)) / sum(test$total)
+
+eps <- 1e-15
+
+log_loss <- -mean(
+  test$actual * log(test$pred + eps) +
+  (1 - test$actual) * log(1 - test$pred + eps)
+)
+
+log_loss
+
+mae
+rmse
+weighted_mae
+
+ggplot(test, aes(x = actual, y = pred, size = total)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(
+    title = "Predicted vs Actual Magnet Enrollment",
+    x = "Actual Proportion",
+    y = "Predicted Probability"
+  ) +
+  theme_minimal()
+```
+
+
+
+
+---
+# Final Conclusion
+
+The objective of this analysis was to determine whether disparities in magnet school enrollment are driven by race, socioeconomic status (SES), or underlying structural differences across schools. To address this, a sequence of models was constructed, beginning with a race-only specification and progressively incorporating SES, program availability, diversity, and interaction effects.
+
+The race-only model established that enrollment probabilities differ significantly across racial groups. However, this model is inherently incomplete. By treating race as the sole predictor, it implicitly attributes all observed differences to race itself, without accounting for variation in school-level opportunity. This creates a classic underfitting problem, where omitted structural variables bias interpretation and obscure the true mechanism driving disparities.
+
+To correct for this, additional variables were introduced. The full structural model (`log.obj.full`) incorporated SES (measured as the proportion of students receiving free lunch), the number of available magnet programs, and a diversity index capturing racial composition within schools. The results from this model demonstrate that structural factors dominate the enrollment process.
+
+## Program Availability Effect
+
+The coefficient for program availability is:
+
+$$
+\hat{\beta}_{programs} = 0.849948
+$$
+
+$$
+e^{0.849948} = 2.339
+$$
+
+Thus, each additional magnet program increases the odds of enrollment by:
+
+$$
+2.339 - 1 = 1.339
+$$
+
+or **133.9\% per additional program**.
+
+This is the largest effect observed across all predictors, indicating that access to magnet programs is primarily determined by institutional availability rather than individual characteristics. In practical terms, students in schools offering more programs are dramatically more likely to enroll, regardless of race.
+
+## SES Effect
+
+The SES effect is also statistically significant:
+
+$$
+\hat{\beta}_{pct\_free} = 0.552280
+$$
+
+$$
+e^{0.552280} = 1.737
+$$
+
+This corresponds to a **73.7\% increase in odds for a full-unit increase in SES**. However, because SES is measured on a 0–1 scale, a more meaningful interpretation is:
+
+$$
+e^{0.552280 \cdot 0.1} \approx 1.057
+$$
+
+or approximately a **5.7\% increase in odds for a 10 percentage point increase in poverty concentration**.
+
+This indicates that SES plays a role, but its magnitude is substantially smaller than the effect of program availability.
+
+## Diversity Effect
+
+The diversity coefficient is:
+
+$$
+\hat{\beta}_{diversity} = -1.259314
+$$
+
+$$
+e^{-1.259314} = 0.284
+$$
+
+$$
+1 - 0.284 = 0.716
+$$
+
+An increase in school-level diversity is associated with a **71.6\% decrease in the odds of magnet enrollment**.
+
+This suggests that more racially heterogeneous schools tend to have lower levels of magnet participation, reinforcing the importance of structural differences across schools.
+
+## Interaction Model Interpretation
+
+While the structural model provides a strong baseline, the interaction model (`log.obj.int`) reveals that the relationship between SES and enrollment is not uniform across racial groups.
+
+For White students (reference group):
+
+$$
+\hat{\beta}_{SES} = 0.334672
+$$
+
+$$
+e^{0.334672} = 1.398
+$$
+
+This corresponds to a **39.8\% increase in odds**.
+
+### Black Students
+
+Interaction term:
+
+$$
+\hat{\beta}_{Black \times SES} = 1.282188
+$$
+
+Total SES effect:
+
+$$
+0.334672 + 1.282188 = 1.61686
+$$
+
+$$
+e^{1.61686} = 5.04
+$$
+
+This corresponds to a **five-fold increase in odds**.
+
+This indicates that SES improvements translate into substantially larger gains in access for Black students relative to White students.
+
+### Hispanic Students
+
+$$
+\hat{\beta}_{Hispanic \times SES} = 0.595168
+$$
+
+$$
+e^{0.595168} = 1.813
+$$
+
+This implies an **81.3\% stronger SES effect relative to White students**.
+
+These results demonstrate that SES does not operate uniformly across racial groups. Instead, it acts as an amplifying mechanism for some groups and a weaker mechanism for others.
+
+## Model Comparison (ANOVA)
+
+The analysis of deviance between the interaction model and the structural model yields:
+
+$$
+\chi^2 = 402.73
+$$
+
+This large improvement in fit indicates that interaction effects are essential for accurately modeling enrollment probabilities. Ignoring these interactions results in model misspecification.
+
+## Core Findings
+
+Taken together, the results establish three key findings:
+
+1. Race remains a statistically significant predictor even after controlling for SES and structural variables.
+2. Structural factors—particularly the number of available magnet programs—are the dominant drivers of enrollment.
+3. SES operates differently across racial groups, meaning gains in socioeconomic status do not translate equally across groups.
+
+
+# **Final Model Validation Conclusion** **IMPORTANT NOTE**
+
+The model demonstrates moderate predictive performance, with an average error of approximately 22 percentage points and improved accuracy for larger schools. However, systematic deviations in the predicted vs. actual plot reveal that the model consistently underpredicts high-enrollment schools and overpredicts low-enrollment schools. This compression toward the mean indicates that important determinants of magnet enrollment remain unobserved. While structural variables such as program availability significantly improve model fit, the remaining prediction error suggests that institutional constraints—such as program capacity, admissions criteria, and geographic access—play a critical role in shaping enrollment outcomes.
+
+## Final Interpretation
+
+The results can be summarized as:
+
+$$
+\text{Observed inequality} = \text{Structural access differences} + \text{Differential SES effects}
+$$
+
+not simply differences in individual behavior.
+
+The primary driver of disparities in magnet school enrollment is not race alone, nor SES alone, but the interaction between demographic characteristics and unequal access to educational opportunities across schools.
+Therefore, Magnet enrollment is fundamentally structured by access. Students are not making choices within a uniform system; they are operating within different opportunity environments. These environments—defined by program availability, school composition, and socioeconomic context—ultimately determine who has access to magnet programs and who does not.
